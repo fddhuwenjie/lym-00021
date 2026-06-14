@@ -4,9 +4,27 @@ from solvers.nqueens import NQueensSolver
 from solvers.sudoku import SudokuSolver
 from solvers.sudoku_generator import SudokuGenerator
 from solvers.cube2 import Cube2Solver
+from solvers.counter import CounterSolver
+from solvers.csp import CSPSolver
 from solvers.benchmark import Benchmark
 
 app = Flask(__name__)
+
+_cube3_solver = None
+_counter_solver = None
+
+def get_cube3_solver():
+    global _cube3_solver
+    if _cube3_solver is None:
+        from solvers.cube3 import Cube3Solver
+        _cube3_solver = Cube3Solver()
+    return _cube3_solver
+
+def get_counter_solver():
+    global _counter_solver
+    if _counter_solver is None:
+        _counter_solver = CounterSolver()
+    return _counter_solver
 
 
 def _error_response(message: str, code: int = 400):
@@ -65,6 +83,43 @@ def root():
                 "GET /cube2/scramble": {
                     "params": {"length": "int (默认 8)"}
                 }
+            },
+            "三阶魔方": {
+                "POST /api/cube3/solve": {
+                    "params": {
+                        "state_string": "str 54字符 (URFDLB面序)",
+                        "max_depth": "int (默认 20)",
+                        "include_stats": "bool (默认 true)",
+                        "verify": "bool 验证解是否正确 (默认 true)"
+                    }
+                },
+                "POST /api/cube3/validate": {
+                    "params": {
+                        "state_string": "str 54字符 (URFDLB面序)"
+                    }
+                }
+            },
+            "解空间计数": {
+                "POST /api/count": {
+                    "params": {
+                        "problem_type": "str 'nqueens' | 'sudoku' | 'cube2'",
+                        "n": "int (nqueens时使用)",
+                        "board": "[[int]*9]*9 或 board_string: str (sudoku时使用)",
+                        "state_string": "str (cube2时使用)",
+                        "include_stats": "bool (默认 true)"
+                    }
+                }
+            },
+            "通用CSP引擎": {
+                "POST /api/csp/solve": {
+                    "params": {
+                        "problem": "CSP问题描述 (variables, domains, constraints)",
+                        "mode": "str 'one' | 'all' (默认 'one')",
+                        "solution_limit": "int mode=all时限制返回解数 (默认 100)",
+                        "include_stats": "bool (默认 true)"
+                    }
+                },
+                "GET /api/csp/examples": "获取预置经典CSP实例"
             },
             "基准测试": {
                 "GET /benchmark": "运行预置10道混合题面",
@@ -395,6 +450,208 @@ def benchmark_presets():
         "status": "ok",
         "presets": Benchmark.PRESET_PUZZLES
     })
+
+
+# ==================== 三阶魔方 ====================
+@app.route("/api/cube3/validate", methods=["POST"])
+def cube3_validate():
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception:
+        return _error_response("无效的 JSON 请求体")
+
+    state_string = data.get("state_string")
+    if not state_string:
+        return _error_response("缺少参数: state_string")
+
+    solver = get_cube3_solver()
+    valid, reason = solver.validate_state(state_string)
+
+    return jsonify({
+        "status": "ok",
+        "valid": valid,
+        "reason": reason,
+    })
+
+
+@app.route("/api/cube3/solve", methods=["POST"])
+def cube3_solve():
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception:
+        return _error_response("无效的 JSON 请求体")
+
+    state_string = data.get("state_string")
+    if not state_string:
+        return _error_response("缺少参数: state_string")
+
+    max_depth = data.get("max_depth", 20)
+    include_stats = data.get("include_stats", True)
+    verify = data.get("verify", True)
+
+    solver = get_cube3_solver()
+
+    try:
+        moves, stats = solver.solve(state_string, include_stats=True, max_depth=max_depth)
+    except ValueError as e:
+        return _error_response(str(e))
+
+    response = {"status": "ok"}
+    if moves is None:
+        response["result"] = "not_found"
+        response["moves"] = None
+        response["message"] = f"在 max_depth={max_depth} 内未找到解"
+    else:
+        response["result"] = "optimal"
+        response["moves"] = moves
+        response["move_count"] = len(moves)
+        response["move_sequence"] = " ".join(moves)
+        if verify:
+            ok, msg = solver.verify_solution(state_string, moves)
+            response["verified"] = ok
+            response["verify_message"] = msg
+
+    if include_stats:
+        response["stats"] = stats
+
+    return jsonify(response)
+
+
+# ==================== 解空间计数 ====================
+@app.route("/api/count", methods=["POST"])
+def count_solutions():
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception:
+        return _error_response("无效的 JSON 请求体")
+
+    problem_type = data.get("problem_type")
+    if not problem_type:
+        return _error_response("缺少参数: problem_type")
+
+    if problem_type not in ("nqueens", "sudoku", "cube2"):
+        return _error_response("problem_type 必须是 'nqueens' | 'sudoku' | 'cube2'")
+
+    include_stats = data.get("include_stats", True)
+    counter = get_counter_solver()
+
+    try:
+        if problem_type == "nqueens":
+            n = data.get("n")
+            if n is None:
+                return _error_response("缺少参数: n")
+            if not isinstance(n, int) or n < 0 or n > 16:
+                return _error_response("n 必须是 0~16 的整数")
+
+            count, stats = counter.count_nqueens(n)
+            response = {
+                "status": "ok",
+                "problem_type": "nqueens",
+                "n": n,
+                "solution_count": count,
+                "exact": True,
+            }
+            if include_stats:
+                response["stats"] = stats
+
+        elif problem_type == "sudoku":
+            board, board_string, err = _parse_sudoku_input(data)
+            if err:
+                return _error_response(err)
+
+            count, hit_limit, stats = counter.count_sudoku(board, limit=1000)
+            response = {
+                "status": "ok",
+                "problem_type": "sudoku",
+                "solution_count": count,
+                "count_limit": 1000,
+                "hit_limit": hit_limit,
+                "exact": not hit_limit,
+                "message": "超过 1000 解" if hit_limit else "精确计数",
+            }
+            if include_stats:
+                response["stats"] = stats
+
+        elif problem_type == "cube2":
+            state_string = data.get("state_string")
+            if not state_string:
+                return _error_response("缺少参数: state_string")
+
+            max_depth = data.get("max_depth", 14)
+            count, depth, stats = counter.count_cube2_shortest_paths_bfs(
+                state_string, max_depth=max_depth
+            )
+            response = {
+                "status": "ok",
+                "problem_type": "cube2",
+                "shortest_path_count": count,
+                "shortest_depth": depth,
+                "exact": depth != -1,
+            }
+            if include_stats:
+                response["stats"] = stats
+
+    except ValueError as e:
+        return _error_response(str(e))
+
+    return jsonify(response)
+
+
+# ==================== 通用CSP引擎 ====================
+@app.route("/api/csp/examples", methods=["GET"])
+def csp_examples():
+    examples = CSPSolver.get_examples()
+    return jsonify({
+        "status": "ok",
+        "examples": examples,
+    })
+
+
+@app.route("/api/csp/solve", methods=["POST"])
+def csp_solve():
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception:
+        return _error_response("无效的 JSON 请求体")
+
+    problem = data.get("problem")
+    if not problem:
+        return _error_response("缺少参数: problem")
+
+    mode = data.get("mode", "one")
+    if mode not in ("one", "all"):
+        return _error_response("mode 必须是 'one' | 'all'")
+
+    solution_limit = data.get("solution_limit", 100)
+    include_stats = data.get("include_stats", True)
+
+    solver = CSPSolver()
+
+    try:
+        solutions, stats = solver.solve(
+            problem, mode=mode, solution_limit=solution_limit
+        )
+    except ValueError as e:
+        return _error_response(str(e))
+
+    response = {
+        "status": "ok",
+        "mode": mode,
+        "solution_count": len(solutions),
+    }
+
+    if mode == "one":
+        response["solution"] = solutions[0] if solutions else None
+    else:
+        response["solutions"] = solutions
+        if solution_limit is not None:
+            response["solution_limit"] = solution_limit
+            response["reached_limit"] = len(solutions) >= solution_limit
+
+    if include_stats:
+        response["stats"] = stats
+
+    return jsonify(response)
 
 
 if __name__ == "__main__":

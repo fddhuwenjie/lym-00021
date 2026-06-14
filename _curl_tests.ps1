@@ -117,4 +117,123 @@ for ($i=1; $i -le 3; $i++) {
     Write-Host "  第${i}次: $([math]::Round($t,1))ms (目标<100ms) result=$($r.result) bt=$($r.stats.backtrack_count) nodes=$($r.stats.nodes_visited)" -ForegroundColor $color
 }
 
+Write-Host "`n`n========== 新增功能验证 ==========" -ForegroundColor Magenta
+
+# 16. N皇后 N=14 解计数 (目标 365596, 5秒内)
+Write-Host "`n=== N皇后 N=14 解计数 (目标: 365596, 5秒内) ===" -ForegroundColor Yellow
+$n14_sw = [System.Diagnostics.Stopwatch]::StartNew()
+$n14_result = Test-Curl "N皇后 N=14 计数" POST "/api/count" @{
+    problem_type = "nqueens"
+    n = 14
+}
+$n14_sw.Stop()
+$n14_ms = $n14_sw.Elapsed.TotalMilliseconds
+$n14_ok = $n14_result -and $n14_result.solution_count -eq 365596 -and $n14_ms -lt 5000
+Write-Host "*** N皇后 N=14: 解数=$($n14_result.solution_count) 耗时=$([math]::Round($n14_ms,1))ms 目标:<5000ms, 解数=365596 ***" -ForegroundColor $(if ($n14_ok) {"Green"} else {"Red"})
+
+# 17. 数独解计数
+Write-Host "`n=== 数独解计数 (上限1000) ===" -ForegroundColor Cyan
+Test-Curl "数独解计数" POST "/api/count" @{
+    problem_type = "sudoku"
+    board_string = "003020600900305001001806400008102900700000008006708200002609500800203009005010300"
+}
+
+# 18. 二阶魔方最短路径计数
+Write-Host "`n=== 二阶魔方最短路径计数 ===" -ForegroundColor Cyan
+Test-Curl "二阶魔方最短路径计数" POST "/api/count" @{
+    problem_type = "cube2"
+    state_string = "WWWWOOGOGGGBBBBRRRRYYYY"
+    max_depth = 11
+}
+
+# 19. 三阶魔方状态验证
+Write-Host "`n=== 三阶魔方状态验证 ===" -ForegroundColor Cyan
+Test-Curl "三阶魔方已还原状态验证" POST "/api/cube3/validate" @{
+    state_string = "UUUUUUUUURRRRRRRRRFFFFFFFFFDDDDDDDDDLLLLLLLLLBBBBBBBBB"
+}
+
+# 20. 通用CSP引擎 - 4色图着色
+Write-Host "`n=== 通用CSP引擎 - 4色图着色 ===" -ForegroundColor Yellow
+$csp_sw = [System.Diagnostics.Stopwatch]::StartNew()
+$graph_coloring = Test-Curl "4色图着色" POST "/api/csp/solve" @{
+    problem = @{
+        variables = @("WA", "NT", "SA", "Q", "NSW", "V", "T")
+        domains = @{
+            WA = @(0, 1, 2, 3)
+            NT = @(0, 1, 2, 3)
+            SA = @(0, 1, 2, 3)
+            Q = @(0, 1, 2, 3)
+            NSW = @(0, 1, 2, 3)
+            V = @(0, 1, 2, 3)
+            T = @(0, 1, 2, 3)
+        }
+        constraints = @(
+            @{ type = "all_different"; variables = @("WA", "NT") }
+            @{ type = "all_different"; variables = @("WA", "SA") }
+            @{ type = "all_different"; variables = @("NT", "SA") }
+            @{ type = "all_different"; variables = @("NT", "Q") }
+            @{ type = "all_different"; variables = @("SA", "Q") }
+            @{ type = "all_different"; variables = @("SA", "NSW") }
+            @{ type = "all_different"; variables = @("SA", "V") }
+            @{ type = "all_different"; variables = @("Q", "NSW") }
+            @{ type = "all_different"; variables = @("NSW", "V") }
+        )
+    }
+    mode = "one"
+}
+$csp_sw.Stop()
+$csp_ok = $graph_coloring -and $graph_coloring.solution_count -ge 1
+Write-Host "*** 4色图着色: 解数=$($graph_coloring.solution_count) 耗时=$([math]::Round($csp_sw.Elapsed.TotalMilliseconds,1))ms ***" -ForegroundColor $(if ($csp_ok) {"Green"} else {"Red"})
+
+# 21. 通用CSP引擎 - 全部解
+Write-Host "`n=== 通用CSP引擎 - 4色图着色全部解 ===" -ForegroundColor Cyan
+Test-Curl "4色图着色全部解" POST "/api/csp/solve" @{
+    problem = @{
+        variables = @("WA", "NT", "SA", "Q", "NSW", "V", "T")
+        domains = @{
+            WA = @(0, 1, 2, 3)
+            NT = @(0, 1, 2, 3)
+            SA = @(0, 1, 2, 3)
+            Q = @(0, 1, 2, 3)
+            NSW = @(0, 1, 2, 3)
+            V = @(0, 1, 2, 3)
+            T = @(0, 1, 2, 3)
+        }
+        constraints = @(
+            @{ type = "all_different"; variables = @("WA", "NT") }
+            @{ type = "all_different"; variables = @("WA", "SA") }
+            @{ type = "all_different"; variables = @("NT", "SA") }
+            @{ type = "all_different"; variables = @("NT", "Q") }
+            @{ type = "all_different"; variables = @("SA", "Q") }
+            @{ type = "all_different"; variables = @("SA", "NSW") }
+            @{ type = "all_different"; variables = @("SA", "V") }
+            @{ type = "all_different"; variables = @("Q", "NSW") }
+            @{ type = "all_different"; variables = @("NSW", "V") }
+        )
+    }
+    mode = "all"
+    solution_limit = 100
+}
+
+# 22. 通用CSP引擎 - 预置实例
+Write-Host "`n=== 通用CSP引擎 - 预置实例 ===" -ForegroundColor Cyan
+Test-Curl "CSP预置实例" GET "/api/csp/examples" | Out-Null
+
+# 23. 三阶魔方求解 - 已知20步最优解 (superflip)
+Write-Host "`n=== 三阶魔方求解 - Superflip (20步最优解, 30秒内) ===" -ForegroundColor Yellow
+$cube3_sw = [System.Diagnostics.Stopwatch]::StartNew()
+$cube3_result = Test-Curl "三阶魔方 Superflip" POST "/api/cube3/solve" @{
+    state_string = "UUFUUFUUFURRURRURRFFFFFFFFFDDDDDDDDDLLBLLBLLBBBBBBBBB"
+    max_depth = 20
+    verify = $true
+}
+$cube3_sw.Stop()
+$cube3_ms = $cube3_sw.Elapsed.TotalMilliseconds
+$cube3_ok = $cube3_result -and $cube3_result.move_count -le 20 -and $cube3_ms -lt 30000
+if ($cube3_result) {
+    Write-Host "*** 三阶魔方: 步数=$($cube3_result.move_count) 耗时=$([math]::Round($cube3_ms,1))ms 验证=$($cube3_result.verified) 目标:≤20步, <30000ms ***" -ForegroundColor $(if ($cube3_ok -and $cube3_result.verified) {"Green"} else {"Red"})
+}
+
+Write-Host "`n========== 新增功能验证完成 ==========" -ForegroundColor Green
+
 Write-Host "`n========== 所有验证完成 ==========" -ForegroundColor Green
